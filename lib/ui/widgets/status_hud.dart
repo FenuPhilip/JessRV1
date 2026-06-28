@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:rover_companion/models/rover_state.dart';
 import 'package:rover_companion/engines/state_manager.dart';
+import 'package:rover_companion/ui/widgets/connection_indicator.dart';
 
 class StatusHUD extends StatelessWidget {
   final RoverStateManager sm;
@@ -51,6 +52,12 @@ class StatusHUD extends StatelessWidget {
             const SizedBox(width: 10),
             _pulseDot(const Color(0xFFFF4488)),
           ],
+          const SizedBox(width: 12),
+          ConnectionIndicator(
+            status: sm.connectionStatus,
+            onReconnectRover: () => sm.reconnectRover(),
+            onReconnectCamera: () => sm.reconnectCamera(),
+          ),
         ],
       ),
     );

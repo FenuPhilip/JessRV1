@@ -7,6 +7,7 @@ import 'package:rover_companion/models/app_config.dart';
 import 'package:rover_companion/models/memory_model.dart';
 import 'package:rover_companion/models/perception.dart';
 import 'package:rover_companion/models/rover_state.dart';
+import 'package:rover_companion/models/connection_status.dart';
 import 'package:rover_companion/engines/perception_engine.dart';
 import 'package:rover_companion/engines/intent_engine.dart';
 import 'package:rover_companion/engines/behavior_engine.dart';
@@ -38,6 +39,9 @@ class RoverStateManager extends ChangeNotifier {
   String statusMessage = 'Initializing...';
   int servoAngle = 90;
   String? lastVoiceCommand;
+
+  /// Tracks detailed rover and camera connection states.
+  ConnectionStatus connectionStatus = const ConnectionStatus();
 
   // Safety: timeout watchdog
   Timer? _watchdogTimer;
@@ -83,10 +87,40 @@ class RoverStateManager extends ChangeNotifier {
     _voiceSub = _voiceService.commandStream.listen(_handleVoiceCommand);
 
     // Try connecting to rover
+    connectionStatus = connectionStatus.copyWith(
+      rover: ConnectionState.connecting,
+    );
+    notifyListeners();
+
     isConnected = await _commandService.autoDiscoverRover();
 
+    connectionStatus = connectionStatus.copyWith(
+      rover: isConnected ? ConnectionState.connected : ConnectionState.disconnected,
+      lastRoverContact: isConnected ? DateTime.now() : null,
+      clearRoverError: true,
+    );
+
     // Start camera stream from ESP32-CAM
-    await _cameraService.autoDiscoverCam();
+    connectionStatus = connectionStatus.copyWith(
+      camera: ConnectionState.connecting,
+    );
+    notifyListeners();
+
+    final camFound = await _cameraService.autoDiscoverCam();
+    if (camFound) {
+      connectionStatus = connectionStatus.copyWith(
+        camera: ConnectionState.connected,
+        lastCameraFrame: DateTime.now(),
+        clearCameraError: true,
+      );
+    } else {
+      connectionStatus = connectionStatus.copyWith(
+        camera: ConnectionState.disconnected,
+        cameraErrorMessage: 'cam.local not found',
+      );
+    }
+    notifyListeners();
+
     _cameraService.startStream();
 
     try {
@@ -119,11 +153,43 @@ class RoverStateManager extends ChangeNotifier {
   void _startWatchdog() {
     _watchdogTimer?.cancel();
     _watchdogTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
-      isConnected = await _commandService.ping();
-      if (!isConnected && mainState != MainState.error) {
-        _setMainState(MainState.error);
-        statusMessage = 'Connection lost';
+      // Check rover connection
+      final roverAlive = await _commandService.ping();
+      isConnected = roverAlive;
+
+      if (roverAlive) {
+        connectionStatus = connectionStatus.copyWith(
+          rover: ConnectionState.connected,
+          lastRoverContact: DateTime.now(),
+          clearRoverError: true,
+        );
+      } else {
+        connectionStatus = connectionStatus.copyWith(
+          rover: ConnectionState.disconnected,
+          roverErrorMessage: 'No response from rover',
+        );
+        if (mainState != MainState.error) {
+          _setMainState(MainState.error);
+          statusMessage = 'Connection lost';
+        }
       }
+
+      // Check camera availability
+      final camAvailable = _cameraService.isAvailable;
+      if (camAvailable) {
+        connectionStatus = connectionStatus.copyWith(
+          camera: ConnectionState.connected,
+          lastCameraFrame: DateTime.now(),
+          clearCameraError: true,
+        );
+      } else if (connectionStatus.camera != ConnectionState.connecting &&
+          connectionStatus.camera != ConnectionState.unknown) {
+        connectionStatus = connectionStatus.copyWith(
+          camera: ConnectionState.disconnected,
+          cameraErrorMessage: 'Camera stream lost',
+        );
+      }
+
       notifyListeners();
     });
   }
@@ -258,6 +324,58 @@ class RoverStateManager extends ChangeNotifier {
       isConnected = c;
       notifyListeners();
     });
+  }
+
+  /// Reconnect the rover: set connecting state, run discovery, update status.
+  Future<void> reconnectRover() async {
+    connectionStatus = connectionStatus.copyWith(
+      rover: ConnectionState.connecting,
+      clearRoverError: true,
+    );
+    notifyListeners();
+
+    isConnected = await _commandService.autoDiscoverRover();
+
+    connectionStatus = connectionStatus.copyWith(
+      rover: isConnected ? ConnectionState.connected : ConnectionState.disconnected,
+      lastRoverContact: isConnected ? DateTime.now() : null,
+      roverErrorMessage: isConnected ? null : 'Could not reach rover',
+    );
+
+    if (isConnected && mainState == MainState.error) {
+      _setMainState(MainState.idle);
+      statusMessage = 'Reconnected';
+    } else if (!isConnected) {
+      statusMessage = 'Rover unreachable';
+    }
+
+    notifyListeners();
+  }
+
+  /// Reconnect the camera: set connecting state, run discovery, restart stream.
+  Future<void> reconnectCamera() async {
+    connectionStatus = connectionStatus.copyWith(
+      camera: ConnectionState.connecting,
+      clearCameraError: true,
+    );
+    notifyListeners();
+
+    final camFound = await _cameraService.autoDiscoverCam();
+    if (camFound) {
+      await _cameraService.startStream();
+      connectionStatus = connectionStatus.copyWith(
+        camera: ConnectionState.connected,
+        lastCameraFrame: DateTime.now(),
+        clearCameraError: true,
+      );
+    } else {
+      connectionStatus = connectionStatus.copyWith(
+        camera: ConnectionState.disconnected,
+        cameraErrorMessage: 'Could not reach cam.local',
+      );
+    }
+
+    notifyListeners();
   }
 
   void _setMainState(MainState s) {
