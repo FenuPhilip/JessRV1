@@ -1,11 +1,12 @@
 // lib/ui/widgets/status_hud.dart
-
 import 'package:flutter/material.dart';
-import 'package:rover_companion/models/rover_state.dart';
-import 'package:rover_companion/engines/state_manager.dart';
+import 'package:provider/provider.dart';
+import 'package:jessrv1/models/rover_state.dart';
+import 'package:jessrv1/engines/state_manager.dart';
+import 'package:jessrv1/ui/widgets/battery_indicator.dart';
 
 class StatusHUD extends StatelessWidget {
-  final RoverStateManager sm;
+  final StateManager sm;
 
   const StatusHUD({super.key, required this.sm});
 
@@ -43,6 +44,16 @@ class StatusHUD extends StatelessWidget {
             sm.emotionalState.emoji,
             style: const TextStyle(fontSize: 16),
           ),
+          
+          // ✅ CORRECTED: Use sm directly, not Consumer
+          const Spacer(),
+          
+          // ✅ CORRECTED: Use sm.batteryPercent directly
+          BatteryIndicator(
+            batteryPercent: sm.batteryPercent ?? -1,
+            voltage: sm.batteryVoltage,
+          ),
+          
           if (sm.lastPerception.personDetected) ...[
             const SizedBox(width: 10),
             const Icon(Icons.person, color: Color(0xFF00CFFF), size: 16),

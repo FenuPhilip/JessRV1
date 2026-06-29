@@ -18,6 +18,7 @@
  *   GET /move?dir=forward|back|left|right|stop
  *   GET /servo?angle=0-180
  *   GET /status
+ *   GET /battery  (NEW)
  */
 
 #include <WiFi.h>
@@ -29,6 +30,15 @@
 const char* WIFI_SSID     = "YOUR_HOTSPOT_SSID";
 const char* WIFI_PASSWORD = "YOUR_HOTSPOT_PASSWORD";
 const char* HOSTNAME      = "rover";
+
+// ─── Battery monitoring (NEW) ─────────────────────────────────
+const int BATTERY_PIN = 34;        // GPIO34 (ADC1_CH6)
+const float VOLTAGE_MAX = 8.4;     // Fully charged 2S Li-ion
+const float VOLTAGE_MIN = 6.0;     // Cutoff voltage
+const float VOLTAGE_DIVIDER = 4.7; // (R1+R2)/R2 = (100+27)/27 ≈ 4.7
+const int ADC_MAX = 4095;          // 12-bit ADC
+const float ADC_REF_VOLTAGE = 3.3; // ESP32 reference voltage
+const int BATTERY_SAMPLES = 10;    // Number of samples for averaging
 
 // ─── Motor pins ───────────────────────────────────────────────
 #define MOTOR_L_IN1  26
@@ -81,6 +91,36 @@ void applyDirection(String dir) {
   lastCommandTime = millis();
 }
 
+// ─── Battery functions (NEW) ──────────────────────────────────
+float readBatteryVoltage() {
+  int rawADC = 0;
+  for (int i = 0; i < BATTERY_SAMPLES; i++) {
+    rawADC += analogRead(BATTERY_PIN);
+    delay(2);
+  }
+  rawADC = rawADC / BATTERY_SAMPLES;
+  
+  float voltage = (rawADC / (float)ADC_MAX) * ADC_REF_VOLTAGE * VOLTAGE_DIVIDER;
+  return voltage;
+}
+
+int calculateBatteryPercentage(float voltage) {
+  if (voltage >= VOLTAGE_MAX) return 100;
+  if (voltage <= VOLTAGE_MIN) return 0;
+  
+  float percentage = ((voltage - VOLTAGE_MIN) / (VOLTAGE_MAX - VOLTAGE_MIN)) * 100;
+  return constrain((int)percentage, 0, 100);
+}
+
+String getBatteryStatus() {
+  float voltage = readBatteryVoltage();
+  int percent = calculateBatteryPercentage(voltage);
+  
+  String json = "{\"battery_percent\": " + String(percent) + 
+                ", \"voltage\": " + String(voltage, 2) + "}";
+  return json;
+}
+
 // ─── HTTP handlers ────────────────────────────────────────────
 void handleMove() {
   if (server.hasArg("dir")) {
@@ -110,6 +150,11 @@ void handleStatus() {
   server.send(200, "application/json", json);
 }
 
+// ─── NEW: Battery handler ─────────────────────────────────────
+void handleBattery() {
+  server.send(200, "application/json", getBatteryStatus());
+}
+
 void handleNotFound() {
   server.send(404, "text/plain", "Not found");
 }
@@ -133,6 +178,10 @@ void setup() {
   tiltServo.attach(SERVO_PIN, 500, 2400);
   tiltServo.write(90);
 
+  // ─── NEW: Battery ADC setup ────────────────────────────────
+  analogReadResolution(12);  // Set ADC to 12-bit resolution
+  pinMode(BATTERY_PIN, INPUT);
+
   // Wi-Fi
   Serial.print("Connecting to ");
   Serial.println(WIFI_SSID);
@@ -152,13 +201,20 @@ void setup() {
   }
 
   // Routes
-  server.on("/move",   HTTP_GET, handleMove);
-  server.on("/servo",  HTTP_GET, handleServo);
-  server.on("/status", HTTP_GET, handleStatus);
+  server.on("/move",     HTTP_GET, handleMove);
+  server.on("/servo",    HTTP_GET, handleServo);
+  server.on("/status",   HTTP_GET, handleStatus);
+  server.on("/battery",  HTTP_GET, handleBattery);  // ─── NEW ROUTE ───
   server.onNotFound(handleNotFound);
   server.begin();
 
   Serial.println("HTTP server started");
+  Serial.println("Available endpoints:");
+  Serial.println("  /move?dir=forward|back|left|right|stop");
+  Serial.println("  /servo?angle=0-180");
+  Serial.println("  /status");
+  Serial.println("  /battery  (NEW)");
+  
   lastCommandTime = millis();
 }
 
