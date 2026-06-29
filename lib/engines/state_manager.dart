@@ -3,19 +3,19 @@
 import 'dart:async';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
-import 'package:rover_companion/models/app_config.dart';
-import 'package:rover_companion/models/memory_model.dart';
-import 'package:rover_companion/models/perception.dart';
-import 'package:rover_companion/models/rover_state.dart';
-import 'package:rover_companion/engines/perception_engine.dart';
-import 'package:rover_companion/engines/intent_engine.dart';
-import 'package:rover_companion/engines/behavior_engine.dart';
-import 'package:rover_companion/services/command_service.dart';
-import 'package:rover_companion/services/vision_service.dart';
-import 'package:rover_companion/services/voice_service.dart';
-import 'package:rover_companion/services/camera_service.dart';
+import 'package:jessrv1/models/app_config.dart';
+import 'package:jessrv1/models/memory_model.dart';
+import 'package:jessrv1/models/perception.dart';
+import 'package:jessrv1/models/rover_state.dart';
+import 'package:jessrv1/engines/perception_engine.dart';
+import 'package:jessrv1/engines/intent_engine.dart';
+import 'package:jessrv1/engines/behavior_engine.dart';
+import 'package:jessrv1/services/command_service.dart';
+import 'package:jessrv1/services/vision_service.dart';
+import 'package:jessrv1/services/voice_service.dart';
+import 'package:jessrv1/services/camera_service.dart';
 
-class RoverStateManager extends ChangeNotifier {
+class StateManager extends ChangeNotifier {
   final AppConfig config;
 
   late final PerceptionEngine _perceptionEngine;
@@ -39,6 +39,17 @@ class RoverStateManager extends ChangeNotifier {
   int servoAngle = 90;
   String? lastVoiceCommand;
 
+  // ─── NEW: Battery state ─────────────────────────────────────
+  int? _batteryPercent;
+  double? _batteryVoltage;
+  Timer? _batteryTimer;
+  bool _lowBatteryWarningShown = false;
+  void Function(int)? _lowBatteryCallback;
+
+  int? get batteryPercent => _batteryPercent;
+  double? get batteryVoltage => _batteryVoltage;
+  set lowBatteryCallback(void Function(int)? callback) => _lowBatteryCallback = callback;
+
   // Safety: timeout watchdog
   Timer? _watchdogTimer;
   Timer? _loopTimer;
@@ -47,7 +58,7 @@ class RoverStateManager extends ChangeNotifier {
 
   bool _isLoopRunning = false;
 
-  RoverStateManager(this.config) {
+  StateManager(this.config) {
     _perceptionEngine = PerceptionEngine();
     _intentEngine = IntentEngine();
     _behaviorEngine = BehaviorEngine();
@@ -103,9 +114,55 @@ class RoverStateManager extends ChangeNotifier {
     // Start watchdog
     _startWatchdog();
 
+    // ─── NEW: Start battery polling ──────────────────────────
+    startBatteryPolling();
+
     statusMessage = isConnected ? 'Connected' : 'Rover not found';
     notifyListeners();
   }
+
+  // ─── NEW: Battery methods ───────────────────────────────────
+
+  void startBatteryPolling() {
+    _batteryTimer?.cancel();
+    _batteryTimer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => _updateBatteryStatus(),
+    );
+    // Fetch immediately
+    _updateBatteryStatus();
+  }
+
+  void stopBatteryPolling() {
+    _batteryTimer?.cancel();
+    _batteryTimer = null;
+  }
+
+  Future<void> _updateBatteryStatus() async {
+    try {
+      final percent = await _commandService.getBatteryPercentage();
+      final voltage = await _commandService.getBatteryVoltage();
+      
+      if (percent != -1) {
+        _batteryPercent = percent;
+        _batteryVoltage = voltage;
+        
+        // Check for low battery warning
+        if (percent < 15 && !_lowBatteryWarningShown) {
+          _lowBatteryWarningShown = true;
+          _lowBatteryCallback?.call(percent);
+        } else if (percent >= 15) {
+          _lowBatteryWarningShown = false;
+        }
+        
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Battery update failed: $e');
+    }
+  }
+
+  // ─── End of battery methods ────────────────────────────────
 
   void _startBehaviorLoop() {
     _loopTimer?.cancel();
@@ -205,7 +262,7 @@ class RoverStateManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ─── Public API ───
+  // ─── Public API ─────────────────────────────────────────────
 
   void sendManualCommand(MoveDirection dir) {
     if (mainState != MainState.manual) return;
@@ -273,6 +330,9 @@ class RoverStateManager extends ChangeNotifier {
 
   @override
   Future<void> dispose() async {
+    // ─── NEW: Stop battery polling ───────────────────────────
+    stopBatteryPolling();
+    
     _loopTimer?.cancel();
     _watchdogTimer?.cancel();
     await _frameSub?.cancel();

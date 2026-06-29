@@ -1,5 +1,5 @@
 // lib/services/command_service.dart
-
+import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
 import 'package:http/http.dart' as http;
@@ -153,4 +153,38 @@ class CommandService {
   void dispose() {
     _heartbeatTimer?.cancel();
   }
+  
+  Future<int> getBatteryPercentage() async {
+    try {
+      final response = await http.get(
+        Uri.parse('http://$roverHost/battery'),
+      ).timeout(const Duration(seconds: 2));
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['battery_percent'] ?? -1;
+      }
+    } catch (e) {
+      debugPrint('Battery fetch failed: $e');
+    }
+    return -1; // Return -1 if can't fetch
+  }
+  
+  Future<double> getBatteryVoltage() async {
+    try {
+      final response = await http.get(
+        Uri.parse('http://$roverHost/battery'),
+      ).timeout(const Duration(seconds: 2));
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['voltage'] ?? -1.0;
+      }
+    } catch (e) {
+      debugPrint('Battery voltage fetch failed: $e');
+    }
+    return -1.0;
+  }
+}
+
 }

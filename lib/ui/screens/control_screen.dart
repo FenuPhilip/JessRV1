@@ -2,18 +2,72 @@
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:rover_companion/engines/state_manager.dart';
-import 'package:rover_companion/models/rover_state.dart';
-import 'package:rover_companion/ui/widgets/dpad_control.dart';
-import 'package:rover_companion/ui/widgets/camera_stream_widget.dart';
-import 'package:rover_companion/ui/widgets/status_hud.dart';
+import 'package:jessrv1/engines/state_manager.dart';
+import 'package:jessrv1/models/rover_state.dart';
+import 'package:jessrv1/ui/widgets/dpad_control.dart';
+import 'package:jessrv1/ui/widgets/camera_stream_widget.dart';
+import 'package:jessrv1/ui/widgets/status_hud.dart';
 
-class ControlScreen extends StatelessWidget {
+class ControlScreen extends StatefulWidget {
   const ControlScreen({super.key});
 
   @override
+  State<ControlScreen> createState() => _ControlScreenState();
+}
+
+class _ControlScreenState extends State<ControlScreen> {
+  @override
+  void initState() {
+    super.initState();
+    
+    // Start battery polling when screen loads
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final sm = context.read<StateManager>();
+      sm.startBatteryPolling();
+      sm.lowBatteryCallback = (percent) {
+        _showLowBatterySnackbar(percent);
+      };
+    });
+  }
+
+  @override
+  void dispose() {
+    // Stop battery polling when screen closes
+    final sm = context.read<StateManager>();
+    sm.stopBatteryPolling();
+    super.dispose();
+  }
+
+  void _showLowBatterySnackbar(int percent) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.warning, color: Colors.white),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '⚠️ Low Battery: $percent% remaining! Please charge the rover.',
+                style: const TextStyle(fontSize: 14),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.red.shade700,
+        duration: const Duration(seconds: 5),
+        behavior: SnackBarBehavior.floating,
+        action: SnackBarAction(
+          label: 'Dismiss',
+          textColor: Colors.white,
+          onPressed: () {},
+        ),
+      ),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final sm = context.watch<RoverStateManager>();
+    final sm = context.watch<StateManager>();
     final isManual = sm.mainState == MainState.manual;
 
     return Scaffold(
@@ -23,8 +77,7 @@ class ControlScreen extends StatelessWidget {
           children: [
             // Top bar
             Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               child: Row(
                 children: [
                   GestureDetector(
@@ -64,14 +117,15 @@ class ControlScreen extends StatelessWidget {
                     ClipRRect(
                       borderRadius: BorderRadius.circular(16),
                       child: CameraStreamWidget(
-                          cameraService: sm.cameraService),
+                        cameraService: sm.cameraService,
+                      ),
                     ),
                     // Tracking overlay
                     if (sm.mainState == MainState.tracking &&
                         sm.lastPerception.bbox != null)
                       _TrackingOverlay(sm: sm),
                     // Corner markers
-                    _CornerMarkers(),
+                    const _CornerMarkers(),
                   ],
                 ),
               ),
@@ -79,8 +133,7 @@ class ControlScreen extends StatelessWidget {
 
             // Servo control strip
             Padding(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 24, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
               child: _ServoControl(sm: sm),
             ),
 
@@ -102,7 +155,9 @@ class ControlScreen extends StatelessWidget {
                     if (!isManual)
                       Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 6),
+                          horizontal: 16,
+                          vertical: 6,
+                        ),
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(8),
                           color: const Color(0xFFFFAA00).withOpacity(0.1),
@@ -130,8 +185,9 @@ class ControlScreen extends StatelessWidget {
   }
 }
 
+// ─── Mode Toggle Widget ───────────────────────────────────────
 class _ModeToggle extends StatelessWidget {
-  final RoverStateManager sm;
+  final StateManager sm;
   const _ModeToggle({required this.sm});
 
   @override
@@ -141,8 +197,7 @@ class _ModeToggle extends StatelessWidget {
       onTap: isManual ? sm.setAutoMode : sm.setManualMode,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        padding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(10),
           color: isManual
@@ -187,8 +242,9 @@ class _ModeToggle extends StatelessWidget {
   }
 }
 
+// ─── Servo Control Widget ─────────────────────────────────────
 class _ServoControl extends StatelessWidget {
-  final RoverStateManager sm;
+  final StateManager sm;
   const _ServoControl({required this.sm});
 
   @override
@@ -214,15 +270,12 @@ class _ServoControl extends StatelessWidget {
           child: SliderTheme(
             data: SliderThemeData(
               trackHeight: 2,
-              thumbShape:
-                  const RoundSliderThumbShape(enabledThumbRadius: 8),
-              overlayShape:
-                  const RoundSliderOverlayShape(overlayRadius: 16),
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
               activeTrackColor: const Color(0xFF00CFFF),
               inactiveTrackColor: const Color(0xFF1A2030),
               thumbColor: const Color(0xFF00CFFF),
-              overlayColor:
-                  const Color(0xFF00CFFF).withOpacity(0.2),
+              overlayColor: const Color(0xFF00CFFF).withOpacity(0.2),
             ),
             child: Slider(
               min: 0,
@@ -253,6 +306,7 @@ class _ServoControl extends StatelessWidget {
   }
 }
 
+// ─── Servo Button Widget ──────────────────────────────────────
 class _ServoBtn extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
@@ -277,8 +331,9 @@ class _ServoBtn extends StatelessWidget {
   }
 }
 
+// ─── Tracking Overlay Widget ──────────────────────────────────
 class _TrackingOverlay extends StatelessWidget {
-  final RoverStateManager sm;
+  final StateManager sm;
   const _TrackingOverlay({required this.sm});
 
   @override
@@ -306,7 +361,9 @@ class _TrackingOverlay extends StatelessWidget {
                 alignment: Alignment.topLeft,
                 child: Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 4, vertical: 2),
+                    horizontal: 4,
+                    vertical: 2,
+                  ),
                   color: const Color(0xFF00FF88).withOpacity(0.8),
                   child: Text(
                     sm.lastPerception.label.toUpperCase(),
@@ -327,7 +384,10 @@ class _TrackingOverlay extends StatelessWidget {
   }
 }
 
+// ─── Corner Markers Widget ────────────────────────────────────
 class _CornerMarkers extends StatelessWidget {
+  const _CornerMarkers();
+
   @override
   Widget build(BuildContext context) {
     return Positioned.fill(
@@ -336,6 +396,7 @@ class _CornerMarkers extends StatelessWidget {
   }
 }
 
+// ─── Corner Painter ───────────────────────────────────────────
 class _CornerPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
@@ -347,28 +408,48 @@ class _CornerPainter extends CustomPainter {
     const r = 12.0;
     // TL
     canvas.drawLine(
-        Offset(r, r + len), Offset(r, r), paint);
+      Offset(r, r + len),
+      Offset(r, r),
+      paint,
+    );
     canvas.drawLine(
-        Offset(r, r), Offset(r + len, r), paint);
+      Offset(r, r),
+      Offset(r + len, r),
+      paint,
+    );
     // TR
-    canvas.drawLine(Offset(size.width - r - len, r),
-        Offset(size.width - r, r), paint);
-    canvas.drawLine(Offset(size.width - r, r),
-        Offset(size.width - r, r + len), paint);
+    canvas.drawLine(
+      Offset(size.width - r - len, r),
+      Offset(size.width - r, r),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(size.width - r, r),
+      Offset(size.width - r, r + len),
+      paint,
+    );
     // BL
-    canvas.drawLine(Offset(r, size.height - r - len),
-        Offset(r, size.height - r), paint);
-    canvas.drawLine(Offset(r, size.height - r),
-        Offset(r + len, size.height - r), paint);
+    canvas.drawLine(
+      Offset(r, size.height - r - len),
+      Offset(r, size.height - r),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(r, size.height - r),
+      Offset(r + len, size.height - r),
+      paint,
+    );
     // BR
     canvas.drawLine(
-        Offset(size.width - r - len, size.height - r),
-        Offset(size.width - r, size.height - r),
-        paint);
+      Offset(size.width - r - len, size.height - r),
+      Offset(size.width - r, size.height - r),
+      paint,
+    );
     canvas.drawLine(
-        Offset(size.width - r, size.height - r - len),
-        Offset(size.width - r, size.height - r),
-        paint);
+      Offset(size.width - r, size.height - r - len),
+      Offset(size.width - r, size.height - r),
+      paint,
+    );
   }
 
   @override
